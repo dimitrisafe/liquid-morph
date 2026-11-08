@@ -6,7 +6,7 @@ metadata:
   author: Dimitris Afentakis
   website: https://www.dimitrisafentakis.com
   homepage: https://www.dimitrisafentakis.com/skills/liquid-morph
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Liquid morph
@@ -59,8 +59,8 @@ Every engine applies these on its own: proven UI motion rules, adapted to a liqu
 - **Size sets the time.** A flight's duration comes from how far the liquid's farthest edge travels, from a short hop of 60 to a long pour of 560. Opening runs 190 to 340 ms, closing 170 to 300 ms, and a content resize while open 160 to 280 ms. A status picker opens in about 220 ms, a menu in about 270, and a full sheet or sidebar in 300 to 340.
 - **Size sets the curve.** Short hops use `cubic-bezier(0.45, 0.6, 0.35, 1)`. Long pours front-load their motion with the sheet curve `cubic-bezier(0.32, 0.72, 0, 1)`, so the extra time reads as weight rather than lag.
 - **Exits are shorter.** Closing takes about 0.88 of the open time. The scrim fades out 1.35× slower than the liquid closes, so the page settles after the landing.
-- **Nothing grows from nothing.** The content rides the liquid at the liquid's width, and shows only once it is drawn within 60 to 90% of its real size. It fades in with a 6-point blur clearing, smoothed so it never flashes in a frame or two.
-- **It lands exactly.** The goo fades out over the last stretch of a close, so the liquid settles into the trigger's exact shape and corner radius. The trigger's own look (fill, gradient, ring) returns over the last frames, without a lighter frame.
+- **Nothing grows from nothing.** The content rides the liquid at the liquid's width, and shows only once it is drawn within 60 to 90% of its real size. It fades in with a 6-point blur clearing, smoothed so it never flashes in a frame or two. It keeps its padding and layout through a close, and a panel that comes out shorter than the liquid, such as a bar, rides in the liquid's middle.
+- **It lands exactly.** The goo fades out over the last stretch of a close, so the liquid settles into the trigger's exact shape and corner radius. The trigger's own look (gradient, ring, glow) fades back in at the liquid's shape over the last quarter of a close, so a gradient flows in instead of popping in on the landing frame, and the bulge relaxes as it does. It never flashes lighter. SwiftUI can't copy a view, so it does this when the trigger passes its look (`look:`). Without one, and on toolkits that can't copy a view (Compose), the real trigger comes back over the last frames instead.
 - **Wobble is fixed in points.** Corners swell by 24 mid-flight, and a bulge of up to 14 rides the edge that travels farthest. A fixed amount reads livelier on a small element and calmer on a big one, the way spring bounce should scale with size.
 - **Interruptible.** Retargeting carries the current velocity, so closing mid-open reverses from where it is.
 - **Reduced motion is gentler, not absent.** It swaps the morph for a 200 ms crossfade.
@@ -80,7 +80,7 @@ What the morph leaves to you, by the same rules:
 - **Watch the colour blend.** A dark trigger opening a light panel reads as the button filling up on a dark page; on a light page the blend passes through grey. If that reads muddy, bring the panel colour closer to the trigger's.
 - **Separate a panel from a same-coloured page** with a soft shadow, and keep the scrim.
 - **Give the destination a different size from the trigger.** Openness is read from the size change, so a same-size move falls back to the clock.
-- **Gradient triggers** need a solid base colour close to the gradient's middle. The liquid flows in that colour and the gradient returns as it lands.
+- **Gradient triggers** need a solid base colour close to the gradient's middle. The liquid flows in that colour, and the gradient fades back in over the end of the close (in SwiftUI, pass the gradient as `look:`, or it returns on the last frames).
 
 ## 5. Verify
 
@@ -89,7 +89,8 @@ A passing build doesn't prove the motion. Run it, slow it to 0.1 to 0.25 speed (
 - the first open after launch is as smooth as the second;
 - the liquid starts in the trigger's colour and blends to the panel's;
 - the content never shows tiny, and resolves from blur;
-- a rounded-square trigger lands as a rounded square, and a ring around it returns only on the last frames;
+- a rounded-square trigger lands as a rounded square, and its gradient or ring fades back in as it lands, never popping in on the last frame;
+- the content keeps its padding and layout the moment a close starts, and a bar's content stays centred as it shrinks;
 - the landing never flashes lighter;
 - a close while still opening reverses smoothly;
 - reduced motion gives the crossfade.

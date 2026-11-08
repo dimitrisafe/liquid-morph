@@ -48,7 +48,7 @@ export function Checkout() {
 - **Root** (`data-morph-root`). The element the panel lives in. It must contain both the trigger and the panel's resting place. The engine makes a static root `position: relative` and `isolation: isolate`. Add `overflow: hidden` when the panel must be clipped to it.
 - **Trigger** (`data-morph-id`).
   - It needs an opaque background, because the liquid starts in that colour.
-  - A gradient trigger needs a solid `background-color` under its `background-image`. Pick a base colour close to the gradient's middle.
+  - A gradient trigger needs a solid `background-color` under its `background-image`. Pick a base colour close to the gradient's middle. The liquid flows in that colour, and the gradient, ring and shadow fade back in at the liquid's shape over the last quarter of the close.
   - It stays mounted while the panel is open: the engine hides it, then shows it again on the frame the liquid lands.
 - **`<Morph>`** goes anywhere inside the root. Its layers are portaled into the root.
 
@@ -62,7 +62,7 @@ In Next.js the engine file is `'use client'`, so render `Morph` and `MorphSpeed`
 | `panel` | The panel colour, as hex or rgb(a). Set the panel background here, not in `className`. |
 | `radius`, `inset` | The panel's corner radius, and the sheet's gap to the root's edges (default 8). For concentric corners, `radius` = root radius − `inset`. |
 | `label` | The dialog's accessible name. |
-| `ghost` | The trigger's content only, such as its label string or icon element. The engine renders it inside a copy of the trigger that has the trigger's tag and classes, without its fill, border, shadow or `::before`/`::after` decorations. A second, empty copy brings the trigger's look back as the liquid lands. Don't repeat the trigger's classes here. |
+| `ghost` | The trigger's content only, such as its label string or icon element. The engine renders it inside a copy of the trigger that has the trigger's tag and classes, without its fill, border, shadow or `::before`/`::after` decorations. A second, empty copy, drawn at the liquid's box, brings the trigger's look back over the last quarter of the close. Don't repeat the trigger's classes here. |
 | `scrim` | Overlay colour at full openness. Default `rgba(0, 0, 0, 0.2)`. `false` makes the morph non-modal: no overlay, no Escape, and the page stays usable. |
 | `recede` | Scale for `[data-morph-recede]` elements at full openness. Default `0.97`. |
 | `shadow` | box-shadow syntax. It grows in with the liquid. |

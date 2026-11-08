@@ -90,6 +90,9 @@ const EDGE = BLUR * 0.15
 /** The goo fades out over the last GOO_SPAN of openness, so the liquid settles into the trigger's
  *  exact shape (a 12 px corner stays 12 px) instead of a blur-rounded blob that snaps on landing. */
 const GOO_SPAN = 0.15
+/** The trigger's own look (gradient, ring, glow) fades over the last LOOK_SPAN of openness, drawn
+ *  at the liquid's own box, so a gradient trigger flows back in instead of popping in on landing. */
+const LOOK_SPAN = 0.25
 /** The ghost's label copy keeps only the trigger's content: no fill, border, shadow or ::before ring. */
 const LABEL_ONLY: CSSProperties = { background: 'none', borderColor: 'transparent', boxShadow: 'none', outline: 'none' }
 const GHOST_CSS = '.m-ghost-label::before,.m-ghost-label::after{opacity:0!important}'
@@ -437,6 +440,8 @@ function LiquidMorph(props: MorphProps) {
   phaseRef.current = phase
   const [rect, setRect] = useState<Rect | null>(null)
   const [here, setHere] = useState<Rect | null>(null)
+  /** The content's resting box inside the surface (padding offset and size), held while closing. */
+  const [inner, setInner] = useState<Rect | null>(null)
   const [look, setLook] = useState<Look>(NO_LOOK)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const filterId = `morph-${useId().replace(/[^\w-]/g, '')}`
@@ -509,6 +514,7 @@ function LiquidMorph(props: MorphProps) {
     setPhase('landed')
     setRect(null)
     setHere(null)
+    setInner(null)
     live.current.onLanded?.()
   }
 
@@ -563,6 +569,8 @@ function LiquidMorph(props: MorphProps) {
       } else q = (g.target && progress(g.target, g.here, R)) ?? 1 - timed
 
       const goo = ramp(q, 0, GOO_SPAN)
+      // How much of the trigger's own look shows: it fades over the last LOOK_SPAN of openness.
+      const lookIn = g.dir === 'open' ? 1 - ramp(q, 0.003, LOOK_SPAN) : 1 - ramp(q, 0.002, LOOK_SPAN)
       const edge = EDGE * goo
       attr(blurEl.current, 'stdDeviation', (BLUR * goo).toFixed(2))
       attr(matrixEl.current, 'values', gooMatrix(goo))
@@ -574,7 +582,9 @@ function LiquidMorph(props: MorphProps) {
 
       const want = LENS * (1 - Math.exp(-Math.abs(EDGE_SPEED[g.anim.edge](v)) / 2000))
       g.lensAmp += (want - g.lensAmp) * (1 - Math.exp(-dt / 0.025))
-      const L = g.lensAmp * goo > 0.3 ? lensOn(g.anim.edge, R, g.lensAmp * goo) : null
+      // The bulge relaxes as the trigger's look returns, so it never pokes out past a gradient trigger.
+      const amp = g.lensAmp * goo * (1 - lookIn)
+      const L = amp > 0.3 ? lensOn(g.anim.edge, R, amp) : null
       if (L) {
         attr(bulge, 'cx', L.cx.toFixed(2))
         attr(bulge, 'cy', L.cy.toFixed(2))
@@ -588,15 +598,22 @@ function LiquidMorph(props: MorphProps) {
       const b = sy + s.h - (R.y + R.h)
       write(el, 'clip-path', `inset(${t.toFixed(1)}px ${r.toFixed(1)}px ${b.toFixed(1)}px ${l.toFixed(1)}px round ${R.r.toFixed(1)}px)`)
 
-      const cw = g.dir === 'close' ? g.here.w : s.w
-      const fit = cw > 0 ? R.w / cw : 1
+      const rest = g.dir === 'close' ? g.here : s
+      const fit = rest.w > 0 ? R.w / rest.w : 1
       // The content rides the liquid at the liquid's width, but only shows once it is drawn within
       // 60 to 90% of its real size: nothing grows out of a speck or shrinks out of a blow-up.
       const show = Math.min(ramp(q, 0.3, 0.85), ramp(Math.min(fit, 1 / fit), 0.6, 0.9))
       // Eased in time as well, so a steep flight can't flash the content in or out within a frame or two.
       g.ride = Math.abs(show - g.ride) < 0.005 ? show : g.ride + (show - g.ride) * (1 - Math.exp(-dt / FADE_TAU))
       const ride = g.ride
-      write(content.current, 'transform', `translate(${l.toFixed(2)}px, ${t.toFixed(2)}px) scale(${fit.toFixed(4)})`)
+      // The whole panel, padding included, is drawn at the liquid's width. Where it comes out shorter than
+      // the liquid (a bar that mostly changes width) it sits in the liquid's middle rather than its top.
+      const ix = content.current?.offsetLeft ?? 0
+      const iy = content.current?.offsetTop ?? 0
+      const slack = Math.max(0, (R.h - rest.h * fit) / 2)
+      const cx = l + ix * (fit - 1)
+      const cy = t + iy * (fit - 1) + slack
+      write(content.current, 'transform', `translate(${cx.toFixed(2)}px, ${cy.toFixed(2)}px) scale(${fit.toFixed(4)})`)
       write(content.current, 'opacity', ride.toFixed(3))
       write(content.current, 'filter', ride >= 1 ? 'none' : `blur(${((1 - ride) * CONTENT_BLUR).toFixed(1)}px)`)
 
@@ -604,18 +621,17 @@ function LiquidMorph(props: MorphProps) {
       if (at) {
         // The look copy sits outside the clipped surface (a ring drawn past the trigger's edge
         // would be clipped off); the label copy rides inside it.
-        for (const [gh, ox, oy] of [[ghostBox.current, 0, 0], [ghostEl.current, sx, sy]] as const) {
-          write(gh, 'left', `${(at.x - ox).toFixed(1)}px`)
-          write(gh, 'top', `${(at.y - oy).toFixed(1)}px`)
-          write(gh, 'width', `${at.w.toFixed(1)}px`)
-          write(gh, 'height', `${at.h.toFixed(1)}px`)
-          write(gh, 'border-radius', `${(at.r ?? at.h / 2).toFixed(1)}px`)
+        // The label copy waits at the trigger; the look copy is drawn at the liquid's own box, so the
+        // trigger's look can fade over the end of the flight without hanging around a bigger liquid.
+        for (const [gh, box, ox, oy] of [[ghostBox.current, R, 0, 0], [ghostEl.current, at, sx, sy]] as const) {
+          write(gh, 'left', `${(box.x - ox).toFixed(1)}px`)
+          write(gh, 'top', `${(box.y - oy).toFixed(1)}px`)
+          write(gh, 'width', `${box.w.toFixed(1)}px`)
+          write(gh, 'height', `${box.h.toFixed(1)}px`)
+          write(gh, 'border-radius', `${(box.r ?? box.h / 2).toFixed(1)}px`)
         }
-        // The trigger's own look (fill, gradient, border, a ring in ::before) shows only while the
-        // liquid fits the trigger, so nothing of it hangs around a liquid that is still bigger.
-        const fits = g.dir === 'open' ? 1 - ramp(q, 0.003, 0.01) : 1 - ramp(q, 0.002, 0.01)
         const gone = g.dir === 'open' ? ramp(q, 0, 0.25) : ramp(q, 0.02, 0.4)
-        write(ghostBox.current, 'opacity', fits.toFixed(3))
+        write(ghostBox.current, 'opacity', lookIn.toFixed(3))
         write(ghostEl.current, 'opacity', (1 - gone).toFixed(3))
         write(ghostEl.current, 'filter', gone <= 0 ? 'none' : `blur(${(gone * LABEL_BLUR).toFixed(1)}px)`)
       }
@@ -741,6 +757,7 @@ function LiquidMorph(props: MorphProps) {
       setLook(lookOf(el))
       setRect(null)
       setHere(null)
+      setInner(null)
       setPhase('opening')
       requestAnimationFrame(() => {
         const g = geo.current
@@ -773,6 +790,8 @@ function LiquidMorph(props: MorphProps) {
         t0: now,
       }
       geo.current = g
+      const node = content.current
+      setInner(node ? { x: node.offsetLeft, y: node.offsetTop, w: node.offsetWidth, h: node.offsetHeight } : null)
       startAnim(fallback, 'close', now)
       g.dim = { from: g.bg, t0: now, d: g.anim.d * TAIL, ease: g.anim.ease }
       setLook(lookOf(el))
@@ -872,7 +891,7 @@ function LiquidMorph(props: MorphProps) {
                   <div
                     ref={content}
                     className="m-content"
-                    style={{ transformOrigin: '0 0', opacity: 0, willChange: 'transform, opacity, filter', ...(closing && here ? { position: 'absolute', left: 0, top: 0, width: here.w } : null) }}
+                    style={{ transformOrigin: '0 0', opacity: 0, willChange: 'transform, opacity, filter', ...(closing && inner ? { position: 'absolute', left: inner.x, top: inner.y, width: inner.w, height: inner.h } : null) }}
                   >
                     {children}
                   </div>

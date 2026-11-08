@@ -32,6 +32,7 @@ All lengths are in the root's own points or CSS px. All times are in seconds unl
 | `CONTRAST` | 22 | Goo alpha contrast |
 | `EDGE` | `BLUR × 0.15` = 1.5 | Inset of the drawn shape, so the thresholded goo matches the rect |
 | `GOO_SPAN` | 0.15 | Openness over which the goo fades in (open) and out (close) |
+| `LOOK_SPAN` | 0.25 | Openness over which the trigger's look copy fades out (open) and back in (close) |
 | `NEAR`, `FAR` | 60, 560 | Travel of a short hop and of a long pour |
 | `TIMING.open` | 190 → 340 ms | Flight time at `NEAR` → at `FAR` |
 | `TIMING.close` | 170 → 300 ms | |
@@ -142,19 +143,27 @@ alpha'  = c × alpha + min(0, 0.5 - c × 5/12),  where c = 1 + (CONTRAST - 1) ×
 liquid body   rounded rect R, inset by `edge` on every side, corner radius R.r - edge
 bulge         target = LENS × (1 - exp(-|speed of the leading edge| / 2000))
               amp   += (target - amp) × (1 - exp(-dt / LENS_TAU))
-              draw only if amp × goo > 0.3, and only if the leading edge is longer than 2 × R.r + 8:
+              size   = amp × goo × (1 - lookIn)        it relaxes as the trigger's look returns, so it
+                                                       never pokes out past a gradient; lookIn is 0
+                                                       where there is no look copy
+              draw only if size > 0.3, and only if the leading edge is longer than 2 × R.r + 8:
               an ellipse centred on that edge, inset by edge + 2,
-              with half-length (edge length / 2 - R.r - 2) and half-thickness (amp × goo + 2)
+              with half-length (edge length / 2 - R.r - 2) and half-thickness (size + 2)
 liquid fill   mix(trigger fill, panel fill, ramp(q, 0.02, 0.4))          mixed in sRGB
 liquid alpha  1. Only a trigger with no fill of its own fades it: ramp(q, 0, 0.003) opening,
               ramp(q, 0.003, 0.006) closing
 shadow        the panel's shadow with offset, blur and opacity × q, drawn under the goo shape
 
 panel clip    everything inside the panel is clipped to R (rounded, R.r)
-content       restW = rest.w (opening) or here.w (closing)
-              fit   = R.w / restW
-              draw the content laid out at restW, scaled by `fit` from its top-left corner,
-              with that corner at (R.x, R.y)
+content       panel = rest (opening) or here (closing): the panel's rect at rest
+              fit   = R.w / panel.w
+              slack = max(0, (R.h - panel.h × fit) / 2)
+              draw the panel, padding included, laid out as it is at rest and scaled by `fit` from
+              its top-left corner, with that corner at (R.x, R.y + slack). A panel drawn shorter than
+              the liquid (a bar that mostly changes width) sits in the liquid's middle, not its top.
+              While closing, the panel's own box shrinks to the trigger: keep the content's resting
+              layout (its offset inside the panel, its width and height) for the whole close, or its
+              padding drops out and a full-height layout collapses the moment the close starts.
               show  = min(ramp(q, 0.3, 0.85), ramp(min(fit, 1/fit), 0.6, 0.9))
               ride += (show - ride) × (1 - exp(-dt / FADE_TAU)), snapped when within 0.005
               opacity ride, blur (1 - ride) × CONTENT_BLUR
@@ -162,17 +171,20 @@ content       restW = rest.w (opening) or here.w (closing)
 trigger label at the trigger's rect, inside the panel clip, above the content
               gone = ramp(q, 0, 0.25) opening, ramp(q, 0.02, 0.4) closing
               opacity 1 - gone, blur gone × LABEL_BLUR
-trigger look  at the trigger's rect, not clipped (rings can sit outside it), under the label
-              fits = 1 - ramp(q, 0.003, 0.01) opening, 1 - ramp(q, 0.002, 0.01) closing
-              opacity fits
+trigger look  at the liquid's rect R (rounded, R.r), not clipped (rings can sit outside it),
+              above the liquid and under the label
+              lookIn = 1 - ramp(q, 0.003, LOOK_SPAN) opening, 1 - ramp(q, 0.002, LOOK_SPAN) closing
+              opacity lookIn
 
 scrim         opacity q while opening or open; on close, dim.from × (1 - dim.ease(t / dim.d))
 recede        receding content scales to 1 - (1 - recede) × scrim, from its top centre
 ```
 
-The look and the label are two copies of the trigger. The label copy has the trigger's content and none of its fill, border, shadow or decorations. The look copy has the trigger's appearance and no content.
+The look and the label are two copies of the trigger. The label copy has the trigger's content and none of its fill, border, shadow or decorations. The look copy has the trigger's appearance and no content. The label waits at the trigger's rect; the look rides the liquid's rect, so a gradient, ring or glow flows back in over the end of the close instead of appearing on the landing frame, and never hangs around a liquid bigger than itself.
 
-Where a toolkit can't copy a view (SwiftUI, Compose), use the real trigger, which sits under the liquid:
+Where a toolkit can't copy a view (SwiftUI, Compose), let the caller pass the look instead: a drawing of the trigger's background alone (gradient, ring, glow), handed the liquid's rounded rect to draw in, such as SwiftUI's `look: { shape in shape.fill(gradient) }`. Draw it as the look copy above, with the same `lookIn` and bulge rule. While it is drawn, the real trigger stays hidden until the landing frame and the liquid alpha stays 1.
+
+Without a look, use the real trigger, which sits under the liquid:
 
 ```
 closing   trigger opacity = 1 - ramp(q, 0.004, 0.014)      fully in before the liquid starts to fade
@@ -182,6 +194,8 @@ opening   trigger opacity = 1 - ramp(q, 0.003, 0.01)
 ```
 
 Don't crossfade the two over the same frames: two half-transparent copies of a dark button over a light page add up to a lighter, see-through frame.
+
+The real trigger can't follow the liquid's rect, so without a look a gradient or ring returns on the last frames, and the liquid lands in the trigger's flat fill. Either way, give a gradient trigger a fill close to the gradient's middle, because the liquid flows in that fill.
 
 ## 7. Drawing the goo
 
@@ -216,7 +230,8 @@ When the system asks for reduced motion, replace the morph with a `FADE_MS` cros
 - [ ] The trigger is hidden from the open until the landing frame, and shown in the same frame the liquid is removed.
 - [ ] Closing while opening reverses from the current position and velocity.
 - [ ] The goo fades to nothing at rest: a 12-point corner lands as 12 points, not as a circle.
-- [ ] Rings or outlines around the trigger come back only over the last frames of the close, and the landing never flashes lighter.
+- [ ] The trigger's look (gradient, ring, glow) fades back in at the liquid's rect over the last quarter of a close with a look copy (copied, or passed by the caller), or over the last frames with the real trigger, and the landing never flashes lighter.
+- [ ] The content keeps its padding and layout the moment a close starts, and a bar's content stays centred in the liquid as it shrinks.
 - [ ] The first open after launch is as smooth as the second (filters warmed up).
 - [ ] Content never shows drawn below 60% of its size, and never flashes in or out within a frame or two.
 - [ ] Reduced motion gives a 200 ms crossfade.

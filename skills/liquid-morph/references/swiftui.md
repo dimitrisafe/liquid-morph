@@ -1,6 +1,6 @@
 # SwiftUI and UIKit
 
-The skill ships a SwiftUI engine, `assets/swiftui/LiquidMorph.swift`, that implements `spec.md`. It needs iOS 17 or newer and has no dependencies. It is verified on the iOS Simulator for a menu from an avatar, a sidebar from a toggle and a bottom sheet from a button, and compiles in both Swift 5 and Swift 6 language modes.
+The skill ships a SwiftUI engine, `assets/swiftui/LiquidMorph.swift`, that implements `spec.md`. It needs iOS 17 or newer and has no dependencies. It is verified on the iOS Simulator for a menu from an avatar, a sidebar from a toggle, a bottom sheet from a button and a gradient pill into a composer, and compiles in both Swift 5 and Swift 6 language modes.
 
 ## 1. Install
 
@@ -53,6 +53,7 @@ struct Checkout: View {
 | `onLanded` | Runs after every close, once the liquid is back on the trigger. Apply results here. |
 | `content` | The panel. It's laid out at the panel's width, and its height drives the liquid. |
 | `label` | The trigger's content alone (text or icon), without its background. It's drawn where the liquid leaves and lands. |
+| `look` | Optional, after `label`. The trigger's background alone, drawn in the shape it's given (the liquid's rounded rect), such as `{ shape in shape.fill(gradient) }`. Pass it for a gradient, ring or glow trigger: the look fades back in at the liquid's shape over the last quarter of a close, and the bulge relaxes as it does. A ring or glow may draw outside the shape (`shape.inset(by: -2).stroke(…)`, `.shadow(…)`). Without it, the real trigger comes back on the last frames and the liquid lands in `fill`. |
 
 `.environment(\.liquidMorphSpeed, 0.25)` on any ancestor plays every morph below it at quarter speed, for checking the motion.
 
@@ -63,6 +64,22 @@ The recipe table in `SKILL.md` applies; translate `place` into `MorphPlacement`:
 - **Sidebar.** `MorphPlacement(top: 8, bottom: 8, leading: 8, width: 260)`, a light scrim, and the sidebar's own toggle at the trigger's spot inside the panel.
 - **Menu from an avatar or pill.** `MorphPlacement(top: triggerTop, trailing: 16, width: 260)`, so the panel's corner sits on the trigger's corner.
 - **Button into a button** (Add to bag into a stepper). The destination's exact box, `scrim: nil`.
+- **Gradient trigger** (an "Ask AI" pill). Pass `fill` as a colour close to the gradient's middle, and the gradient as `look`:
+
+```swift
+Text("Ask AI")
+    .foregroundStyle(.white)
+    .padding(.horizontal, 28).frame(height: 52)
+    .background(gradient, in: Capsule())
+    .liquidMorph(isPresented: $ask, fill: gradientMiddle, cornerRadius: 26,
+                 panel: .white, panelRadius: 24, placement: MorphPlacement(bottom: 60, width: 340)) {
+        Composer()
+    } label: {
+        Text("Ask AI").foregroundStyle(.white)
+    } look: { shape in
+        shape.fill(gradient)
+    }
+```
 
 ## 4. How the port maps to the spec
 
@@ -70,7 +87,7 @@ The recipe table in `SKILL.md` applies; translate `place` into `MorphPlacement`:
 - **Frames.** `anchorPreference(.bounds)` on the trigger, resolved by the root's `overlayPreferenceValue`. The panel's height is measured with a `GeometryReader` preference.
 - **Goo.** A `Canvas` with `.blur`, `.alphaThreshold(min: 0.5, color: fill)` and a 0.5-point blur. SwiftUI's `.colorMatrix` doesn't clamp alpha, so the web version's contrast matrix would turn dark fills light. At rest the filters are skipped, so the liquid lands as the trigger's exact shape.
 - **Warm-up.** The root runs the filter chain once on an invisible shape, because the first use otherwise stalls for most of the first open.
-- **Trigger look.** SwiftUI can't copy a view's look, so the real trigger stays under the liquid and comes back fully before the liquid fades off it.
+- **Trigger look.** SwiftUI can't copy a view's look. With `look`, the engine draws the caller's look at the liquid's rect as the look copy, above the goo and under the panel, unclipped, and keeps the real trigger hidden until the landing frame. Without it, the real trigger stays under the liquid and comes back fully before the liquid fades off it.
 - **Reduced motion.** With Reduce Motion on, the panel and scrim crossfade in 200 ms at their resting place.
 
 ## 5. UIKit
@@ -88,5 +105,5 @@ Run it on a simulator or device with `.environment(\.liquidMorphSpeed, 0.25)` an
 - The liquid starts in the trigger's colour and blends to the panel's.
 - The content resolves from blur and never shows tiny.
 - A rounded-square trigger lands as a rounded square, not a circle.
-- A ring around the trigger returns only on the last frames.
+- With `look`, a gradient or ring fades in at the liquid's shape over the last quarter of a close: no flat landing followed by a pop. Without it, it returns only on the last frames.
 - The landing never flashes lighter.

@@ -35,6 +35,7 @@ const CARRY_TAU = 0.03;
 const TAIL = 1.35;
 const EDGE = BLUR * 0.15;
 const GOO_SPAN = 0.15;
+const LOOK_SPAN = 0.25;
 const LABEL_ONLY = { background: "none", borderColor: "transparent", boxShadow: "none", outline: "none" };
 const GHOST_CSS = ".m-ghost-label::before,.m-ghost-label::after{opacity:0!important}";
 const PULL_START = 4;
@@ -310,6 +311,7 @@ function LiquidMorph(props) {
   phaseRef.current = phase;
   const [rect, setRect] = useState(null);
   const [here, setHere] = useState(null);
+  const [inner, setInner] = useState(null);
   const [look, setLook] = useState(NO_LOOK);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const filterId = `morph-${useId().replace(/[^\w-]/g, "")}`;
@@ -377,6 +379,7 @@ function LiquidMorph(props) {
     setPhase("landed");
     setRect(null);
     setHere(null);
+    setInner(null);
     live.current.onLanded?.();
   };
   const tick = () => {
@@ -423,6 +426,7 @@ function LiquidMorph(props) {
         if (g.lock) q = 1;
       } else q = (g.target && progress(g.target, g.here, R)) ?? 1 - timed;
       const goo = ramp(q, 0, GOO_SPAN);
+      const lookIn = g.dir === "open" ? 1 - ramp(q, 3e-3, LOOK_SPAN) : 1 - ramp(q, 2e-3, LOOK_SPAN);
       const edge = EDGE * goo;
       attr(blurEl.current, "stdDeviation", (BLUR * goo).toFixed(2));
       attr(matrixEl.current, "values", gooMatrix(goo));
@@ -433,7 +437,8 @@ function LiquidMorph(props) {
       attr(body, "rx", Math.max(0, R.r - edge).toFixed(2));
       const want = LENS * (1 - Math.exp(-Math.abs(EDGE_SPEED[g.anim.edge](v)) / 2e3));
       g.lensAmp += (want - g.lensAmp) * (1 - Math.exp(-dt / 0.025));
-      const L = g.lensAmp * goo > 0.3 ? lensOn(g.anim.edge, R, g.lensAmp * goo) : null;
+      const amp = g.lensAmp * goo * (1 - lookIn);
+      const L = amp > 0.3 ? lensOn(g.anim.edge, R, amp) : null;
       if (L) {
         attr(bulge, "cx", L.cx.toFixed(2));
         attr(bulge, "cy", L.cy.toFixed(2));
@@ -445,26 +450,30 @@ function LiquidMorph(props) {
       const r = sx + s.w - (R.x + R.w);
       const b = sy + s.h - (R.y + R.h);
       write(el, "clip-path", `inset(${t.toFixed(1)}px ${r.toFixed(1)}px ${b.toFixed(1)}px ${l.toFixed(1)}px round ${R.r.toFixed(1)}px)`);
-      const cw = g.dir === "close" ? g.here.w : s.w;
-      const fit = cw > 0 ? R.w / cw : 1;
+      const rest = g.dir === "close" ? g.here : s;
+      const fit = rest.w > 0 ? R.w / rest.w : 1;
       const show = Math.min(ramp(q, 0.3, 0.85), ramp(Math.min(fit, 1 / fit), 0.6, 0.9));
       g.ride = Math.abs(show - g.ride) < 5e-3 ? show : g.ride + (show - g.ride) * (1 - Math.exp(-dt / FADE_TAU));
       const ride = g.ride;
-      write(content.current, "transform", `translate(${l.toFixed(2)}px, ${t.toFixed(2)}px) scale(${fit.toFixed(4)})`);
+      const ix = content.current?.offsetLeft ?? 0;
+      const iy = content.current?.offsetTop ?? 0;
+      const slack = Math.max(0, (R.h - rest.h * fit) / 2);
+      const cx = l + ix * (fit - 1);
+      const cy = t + iy * (fit - 1) + slack;
+      write(content.current, "transform", `translate(${cx.toFixed(2)}px, ${cy.toFixed(2)}px) scale(${fit.toFixed(4)})`);
       write(content.current, "opacity", ride.toFixed(3));
       write(content.current, "filter", ride >= 1 ? "none" : `blur(${((1 - ride) * CONTENT_BLUR).toFixed(1)}px)`);
       const at = g.dir === "open" ? g.from : g.target;
       if (at) {
-        for (const [gh, ox, oy] of [[ghostBox.current, 0, 0], [ghostEl.current, sx, sy]]) {
-          write(gh, "left", `${(at.x - ox).toFixed(1)}px`);
-          write(gh, "top", `${(at.y - oy).toFixed(1)}px`);
-          write(gh, "width", `${at.w.toFixed(1)}px`);
-          write(gh, "height", `${at.h.toFixed(1)}px`);
-          write(gh, "border-radius", `${(at.r ?? at.h / 2).toFixed(1)}px`);
+        for (const [gh, box2, ox, oy] of [[ghostBox.current, R, 0, 0], [ghostEl.current, at, sx, sy]]) {
+          write(gh, "left", `${(box2.x - ox).toFixed(1)}px`);
+          write(gh, "top", `${(box2.y - oy).toFixed(1)}px`);
+          write(gh, "width", `${box2.w.toFixed(1)}px`);
+          write(gh, "height", `${box2.h.toFixed(1)}px`);
+          write(gh, "border-radius", `${(box2.r ?? box2.h / 2).toFixed(1)}px`);
         }
-        const fits = g.dir === "open" ? 1 - ramp(q, 3e-3, 0.01) : 1 - ramp(q, 2e-3, 0.01);
         const gone = g.dir === "open" ? ramp(q, 0, 0.25) : ramp(q, 0.02, 0.4);
-        write(ghostBox.current, "opacity", fits.toFixed(3));
+        write(ghostBox.current, "opacity", lookIn.toFixed(3));
         write(ghostEl.current, "opacity", (1 - gone).toFixed(3));
         write(ghostEl.current, "filter", gone <= 0 ? "none" : `blur(${(gone * LABEL_BLUR).toFixed(1)}px)`);
       }
@@ -574,6 +583,7 @@ function LiquidMorph(props) {
       setLook(lookOf(el));
       setRect(null);
       setHere(null);
+      setInner(null);
       setPhase("opening");
       requestAnimationFrame(() => {
         const g = geo.current;
@@ -606,6 +616,8 @@ function LiquidMorph(props) {
         t0: now
       };
       geo.current = g;
+      const node = content.current;
+      setInner(node ? { x: node.offsetLeft, y: node.offsetTop, w: node.offsetWidth, h: node.offsetHeight } : null);
       startAnim(fallback, "close", now);
       g.dim = { from: g.bg, t0: now, d: g.anim.d * TAIL, ease: g.anim.ease };
       setLook(lookOf(el));
@@ -696,7 +708,7 @@ function LiquidMorph(props) {
                   <div
       ref={content}
       className="m-content"
-      style={{ transformOrigin: "0 0", opacity: 0, willChange: "transform, opacity, filter", ...closing && here ? { position: "absolute", left: 0, top: 0, width: here.w } : null }}
+      style={{ transformOrigin: "0 0", opacity: 0, willChange: "transform, opacity, filter", ...closing && inner ? { position: "absolute", left: inner.x, top: inner.y, width: inner.w, height: inner.h } : null }}
     >
                     {children}
                   </div>

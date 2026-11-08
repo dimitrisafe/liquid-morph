@@ -1,6 +1,6 @@
 {
   "name": "liquid-morph",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A liquid morph for web, iOS and Android: any button, pill or card pours into the panel it opens, and back. React and SwiftUI engines, plus a spec to port it anywhere.",
   "author": {
     "name": "Dimitris Afentakis",

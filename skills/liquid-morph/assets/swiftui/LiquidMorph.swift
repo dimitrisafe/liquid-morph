@@ -11,6 +11,9 @@
 //       } label: {
 //           Text("Pay now")                      // the trigger's content, without its background
 //       }
+//
+//   A gradient, ring or glow trigger also passes its look, drawn in the shape it is given:
+//       } label: { Text("Ask AI") } look: { shape in shape.fill(gradient) }
 
 import SwiftUI
 #if canImport(UIKit)
@@ -105,10 +108,43 @@ extension View {
     ) -> some View {
         modifier(MorphTriggerModifier(
             isPresented: isPresented,
-            config: MorphConfig(fill: RGBA(fill), triggerRadius: cornerRadius, panel: RGBA(panel), panelColor: panel, radius: panelRadius, placement: placement, scrim: scrim, shadow: shadow),
+            config: MorphConfig(fill: RGBA(fill), triggerRadius: cornerRadius, panel: RGBA(panel), panelColor: panel, radius: panelRadius, placement: placement, scrim: scrim, shadow: shadow, hasLook: false),
             onLanded: onLanded,
             panelContent: content,
-            label: label
+            label: label,
+            look: nil
+        ))
+    }
+
+    /// A liquid morph whose trigger has a look the liquid's flat `fill` can't carry: a gradient,
+    /// a ring or a glow. `look` draws that look alone, in the shape it is given (the liquid's
+    /// rounded rect), and fades back in at the liquid's shape over the last quarter of a close,
+    /// so a gradient flows in instead of popping in as the liquid lands.
+    /// - Parameters:
+    ///   - fill: a solid colour close to the look's middle; the liquid flows in it.
+    ///   - look: the trigger's background alone, such as `{ shape in shape.fill(gradient) }`.
+    ///     Rings and glows may draw outside the shape.
+    public func liquidMorph<Panel: View, Label: View, Look: View>(
+        isPresented: Binding<Bool>,
+        fill: Color,
+        cornerRadius: CGFloat,
+        panel: Color,
+        panelRadius: CGFloat,
+        placement: MorphPlacement = .sheet(),
+        scrim: Color? = .black.opacity(0.2),
+        shadow: MorphShadow? = nil,
+        onLanded: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Panel,
+        @ViewBuilder label: @escaping () -> Label,
+        @ViewBuilder look: @escaping (RoundedRectangle) -> Look
+    ) -> some View {
+        modifier(MorphTriggerModifier(
+            isPresented: isPresented,
+            config: MorphConfig(fill: RGBA(fill), triggerRadius: cornerRadius, panel: RGBA(panel), panelColor: panel, radius: panelRadius, placement: placement, scrim: scrim, shadow: shadow, hasLook: true),
+            onLanded: onLanded,
+            panelContent: content,
+            label: label,
+            look: { AnyView(look($0)) }
         ))
     }
 }
@@ -130,6 +166,7 @@ private struct MorphSpeedKey: EnvironmentKey {
 private enum K {
     static let blur = 10.0
     static let gooSpan = 0.15
+    static let lookSpan = 0.25
     static let near = 60.0
     static let far = 560.0
     static let open = (190.0, 340.0)
@@ -293,6 +330,9 @@ struct MorphConfig {
     var placement: MorphPlacement
     var scrim: Color?
     var shadow: MorphShadow?
+    /// The caller passed the trigger's look, so a copy of it rides the liquid instead of the real
+    /// trigger coming back under it.
+    var hasLook: Bool
 }
 
 /// Everything one frame draws.
@@ -308,9 +348,14 @@ struct MorphFrame {
     var q = 0.0
     var fit = 1.0
     var restWidth = 0.0
+    /// How far below the liquid's top the content sits: half the room left when the panel,
+    /// drawn at `fit`, comes out shorter than the liquid.
+    var slack = 0.0
     var ride = 0.0
     var labelOpacity = 1.0
     var labelBlur = 0.0
+    /// Opacity of the look copy, drawn at the liquid's rect. Zero without a look.
+    var lookIn = 0.0
     var trigger = CGRect.zero
     var triggerOpacity = 1.0
     var scrim = 0.0
@@ -436,14 +481,21 @@ final class MorphEngine: ObservableObject {
             f.body = CGRect(x: R.x + edge, y: R.y + edge, width: max(0, R.w - 2 * edge), height: max(0, R.h - 2 * edge))
             f.bodyRadius = max(0, R.r - edge)
             f.clip = R
+            f.lookIn = c.hasLook ? 1 - (phase == .closing ? ramp(q, 0.002, K.lookSpan) : ramp(q, 0.003, K.lookSpan)) : 0
             let want = K.lens * (1 - exp(-abs(edgeSpeed(flight.edge, v)) / 2000))
             lensAmp += (want - lensAmp) * (1 - exp(-dt / K.lensTau))
-            f.bulge = lensAmp * goo > 0.3 ? lens(on: flight.edge, R, inset: edge, amp: lensAmp * goo) : nil
+            // The bulge relaxes as the look returns (spec section 6, bulge rule).
+            let amp = lensAmp * goo * (1 - f.lookIn)
+            f.bulge = amp > 0.3 ? lens(on: flight.edge, R, inset: edge, amp: amp) : nil
             f.fill = c.fill.mixed(c.panel, ramp(q, 0.02, 0.4))
 
             let restW = phase == .closing ? here.w : (rest?.w ?? R.w)
+            let restH = phase == .closing ? here.h : (rest?.h ?? R.h)
             f.restWidth = restW
             f.fit = restW > 0 ? R.w / restW : 1
+            // A panel drawn shorter than the liquid (a bar that mostly changes width) sits in its
+            // middle rather than riding its top edge.
+            f.slack = max(0, (R.h - restH * f.fit) / 2)
             let show = min(ramp(q, 0.3, 0.85), ramp(min(f.fit, 1 / max(f.fit, 0.0001)), 0.6, 0.9))
             ride = abs(show - ride) < 0.005 ? show : ride + (show - ride) * (1 - exp(-dt / K.fadeTau))
             f.ride = ride
@@ -451,11 +503,17 @@ final class MorphEngine: ObservableObject {
             let gone = phase == .closing ? ramp(q, 0.02, 0.4) : ramp(q, 0, 0.25)
             f.labelOpacity = 1 - gone
             f.labelBlur = gone * K.labelBlur
-            // SwiftUI can't copy the trigger's look, so the real trigger, under the liquid, takes over
-            // while the liquid fits it (spec, end of section 6). It comes in fully before the liquid
-            // fades off it, so the two never add up to a see-through, lighter frame.
-            f.triggerOpacity = phase == .closing ? 1 - ramp(q, 0.004, 0.014) : 1 - ramp(q, 0.003, 0.01)
-            f.liquidOpacity = ramp(q, 0, 0.004)
+            if c.hasLook {
+                // The look copy stands in for the trigger, which stays hidden until the landing frame.
+                f.triggerOpacity = 0
+                f.liquidOpacity = 1
+            } else {
+                // SwiftUI can't copy the trigger's look, so without one the real trigger, under the
+                // liquid, takes over while the liquid fits it (spec, end of section 6). It comes in
+                // fully before the liquid fades off it, so the two never add up to a lighter frame.
+                f.triggerOpacity = phase == .closing ? 1 - ramp(q, 0.004, 0.014) : 1 - ramp(q, 0.003, 0.01)
+                f.liquidOpacity = ramp(q, 0, 0.004)
+            }
             f.interactive = phase == .open
         }
 
@@ -496,6 +554,7 @@ struct MorphLayerItem: Identifiable {
     let config: MorphConfig
     let content: AnyView
     let label: AnyView
+    let look: ((RoundedRectangle) -> AnyView)?
     let dismiss: () -> Void
 }
 
@@ -586,6 +645,7 @@ private struct MorphTriggerModifier<Panel: View, Label: View>: ViewModifier {
     let onLanded: (() -> Void)?
     let panelContent: () -> Panel
     let label: () -> Label
+    let look: ((RoundedRectangle) -> AnyView)?
     @StateObject private var engine = MorphEngine()
     @Environment(\.morphStage) private var stage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -596,7 +656,7 @@ private struct MorphTriggerModifier<Panel: View, Label: View>: ViewModifier {
             content.opacity(reduceMotion ? 1 : engine.last.triggerOpacity)
         }
         .anchorPreference(key: MorphLayerKey.self, value: .bounds) { anchor in
-            [MorphLayerItem(id: ObjectIdentifier(engine), anchor: anchor, engine: engine, config: config, content: AnyView(panelContent()), label: AnyView(label()), dismiss: { isPresented = false })]
+            [MorphLayerItem(id: ObjectIdentifier(engine), anchor: anchor, engine: engine, config: config, content: AnyView(panelContent()), label: AnyView(label()), look: look, dismiss: { isPresented = false })]
         }
         .onAppear {
             stage?.register(engine)
@@ -638,6 +698,9 @@ private struct MorphLayer: View {
                     }
                     if f.liquid {
                         goo(f)
+                        if let look = item.look, f.lookIn > 0.001 {
+                            lookCopy(f, look)
+                        }
                         panel(f, rest: rest)
                     }
                 }
@@ -676,6 +739,18 @@ private struct MorphLayer: View {
         .accessibilityHidden(true)
     }
 
+    /// The trigger's look at the liquid's rect, above the goo and under the panel. It isn't clipped,
+    /// so a ring or glow can sit outside the liquid.
+    private func lookCopy(_ f: MorphFrame, _ look: (RoundedRectangle) -> AnyView) -> some View {
+        look(RoundedRectangle(cornerRadius: f.clip.r, style: .circular))
+            .frame(width: f.clip.w, height: f.clip.h)
+            .compositingGroup()
+            .opacity(f.lookIn)
+            .offset(x: f.clip.x, y: f.clip.y)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
     private func panel(_ f: MorphFrame, rest: CGRect?) -> some View {
         ZStack(alignment: .topLeading) {
             item.content
@@ -685,7 +760,7 @@ private struct MorphLayer: View {
                 .scaleEffect(f.fit, anchor: .topLeading)
                 .blur(radius: (1 - f.ride) * K.contentBlur)
                 .opacity(f.ride)
-                .offset(x: f.clip.x, y: f.clip.y)
+                .offset(x: f.clip.x, y: f.clip.y + f.slack)
                 .allowsHitTesting(f.interactive)
             item.label
                 .frame(width: f.trigger.width, height: f.trigger.height)
