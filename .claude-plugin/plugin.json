@@ -1,0 +1,29 @@
+{
+  "name": "liquid-morph",
+  "version": "1.1.0",
+  "description": "A liquid morph for web, iOS and Android: any button, pill or card pours into the panel it opens, and back. React and SwiftUI engines, plus a spec to port it anywhere.",
+  "author": {
+    "name": "Dimitris Afentakis",
+    "url": "https://www.dimitrisafentakis.com"
+  },
+  "homepage": "https://www.dimitrisafentakis.com/skills/liquid-morph",
+  "repository": "https://github.com/dimitrisafe/liquid-morph",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "animation",
+    "motion",
+    "morph",
+    "liquid",
+    "gooey",
+    "react",
+    "nextjs",
+    "swiftui",
+    "ios",
+    "android",
+    "jetpack-compose",
+    "compose-multiplatform",
+    "ui"
+  ],
+  "skills": "./skills/"
+}
